@@ -1,7 +1,7 @@
 # # -------------------------------------------------------------------------
 #  * This program is a next-event simulation of a single-server FIFO service
 #  * node using Exponentially distributed interarrival times and Uniformly
-#  * distributed service times (i.e., a M/U/1 queue).  The service node is
+#  * distributed service times (i.e., an M/U/1 queue).  The service node is
 #  * assumed to be initially idle, no arrivals are permitted after the
 #  * terminal time STOP, and the service node is then purged by processing any
 #  * remaining jobs in the service node.
@@ -16,13 +16,28 @@
 #  * -------------------------------------------------------------------------
 #  */
 
+import csv
+import argparse
 from math import log
-from rngs import plantSeeds, random, selectStream  # the multi-stream generator - ENSURE rngs.py in same folder */
+import matplotlib
+from matplotlib import pyplot as plt
+from rngs import plantSeeds, random, selectStream
+
+matplotlib.use('TkAgg')
 
 START = 0.0  # initial time                   */
-STOP = 20000.0  # terminal (close the door) time */
+STOP = 190000.0  # terminal (close the door) time */
 INFINITY = (100.0 * STOP)  # must be much larger than STOP  */
 arrivalTemp = START  # global temp var for getArrival function
+sum = 0
+iter = 0
+number_stream = 0
+file_csv = "metrics.csv"
+matrix = []
+
+
+def Seed(seed):
+    plantSeeds(seed)
 
 
 def Min(a, c):
@@ -58,19 +73,33 @@ def GetArrival():
     # * ---------------------------------------------
     # */
     global arrivalTemp
-
-    selectStream(0)
-    arrivalTemp += Exponential(2.0)
+    global number_stream
+    selectStream(number_stream)
+    # print("arrivalTemp: " + str(arrivalTemp))
+    arrivalTemp += Exponential(2)
     return arrivalTemp
 
 
 def GetService():
     # --------------------------------------------
-    # * generate the next service time with rate 2/3
+    # * generate the next service time with rate 1/2
     # * --------------------------------------------
     # */
-    selectStream(1)
-    return Uniform(1.0, 2.0)
+    global number_stream
+
+    selectStream(number_stream + 1)
+    return Uniform(1, 2)
+
+
+def Feedback():
+    global number_stream
+
+    selectStream(number_stream + 2)
+    p_feedback = 0.2
+    if random() < p_feedback:
+        return True
+    else:
+        return False
 
 
 class track:
@@ -88,63 +117,139 @@ class time:
 
 
 
-index = 0  # used to count departed jobs         */
-number = 0  # number in the node                  */
+def Reset():
+    global arrivalTemp, t, area, matrix
+    arrivalTemp = START
+    t.current = START  # set the clock                         */
+    t.arrival = GetArrival()  # schedule the first arrival            */
+    t.completion = INFINITY  # the first event can't be a completion */
+    area.node = 0
+    area.queue = 0
+    area.service = 0
+    matrix.clear()
+
+
+def Simulation():
+    index = 0  # used to count departed jobs         */
+    number = 0  # number in the node                  */
+    while (t.arrival < STOP) or (number > 0):
+        t.next = Min(t.arrival, t.completion)  # next event time   */
+        if number > 0:  # update integrals  */
+            area.node += (t.next - t.current) * number
+            area.queue += (t.next - t.current) * (number - 1)
+            area.service += (t.next - t.current)
+        # EndIf
+
+        t.current = t.next  # advance the clock */
+
+        if t.current == t.arrival:  # process an arrival */
+
+            number += 1
+            t.arrival = GetArrival()
+            if t.arrival > STOP:
+                t.last = t.current
+                t.arrival = INFINITY
+
+            if number == 1:
+                t.completion = t.current + GetService()
+        # EndOuterIf
+        else:  # process a completion */
+            index += 1
+            if not Feedback():
+                number -= 1
+            if number > 0:
+                t.completion = t.current + GetService()
+            else:
+                t.completion = INFINITY
+            if index % 500 == 0 and index < 150000 and index != 0:
+                SaveData(index)
+            # EndWhile
+
+    print("   average interarrival time = {0:6.2f}".format(t.last / index))
+    print("   average wait ............ = {0:6.2f}".format(area.node / index))
+    print("   average delay ........... = {0:6.2f}".format(area.queue / index))
+    print("   average service time .... = {0:6.2f}".format(area.service / index))
+    print("   average # in the node ... = {0:6.2f}".format(area.node / t.current))
+    print("   average # in the queue .. = {0:6.2f}".format(area.queue / t.current))
+    print("   utilization ............. = {0:6.2f}".format(area.service / t.current))
+
+    # Dati da salvare:
+    # Utilization
+    # Waiting Time
+    # Average # in the queue
+
+
+def SaveData(index):
+    average_wait = area.node / index
+    average_in_node = area.node / t.current
+    average_in_queue = area.queue / t.current
+    utilization = area.service / t.current
+    matrix.append([index, average_wait, average_in_node, average_in_queue, utilization])
+
+def CleanData():
+    with open(file_csv, mode='w', newline='') as file:
+        pass
+
+def WriteData():
+    with open(file_csv, mode='a', newline='') as file:
+        writer = csv.writer(file)
+        for row in matrix:
+            writer.writerow(row)
+        writer.writerow(['Delimiter'])
+
+
+def GraphicData(metric, metricsrow, seed):
+    x = []
+    y = []
+    colors = ['b', 'g', 'r','c', 'm', 'y', 'k']
+    color_index = 0
+
+    with open(file_csv, mode='r') as file:
+        reader = csv.reader(file)
+        for row in reader:
+            if row == ['Delimiter']:
+                if x and y:
+                    plt.scatter(x, y, color=colors[color_index % len(colors)], label=f'Seed: {seed[color_index]}', s=6)
+                    color_index += 1
+                    x = []
+                    y = []
+            else:
+                x.append(float(row[0]))
+                y.append(float(row[metricsrow]))
+
+    # Plot any remaining points after the last delimiter
+    if x and y:
+        plt.scatter(x, y, color=colors[color_index % len(colors)], label=f'Seed: {seed[color_index + 1]}', s=6)
+
+    plt.xlabel('Number of Jobs')
+    plt.ylabel(metric)
+    plt.title("Metric Graphic")
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+
 area = track()
 t = time()
 
-plantSeeds(123456789)
 
-t.current = START  # set the clock                         */
-t.arrival = GetArrival()  # schedule the first arrival            */
-t.completion = INFINITY  # the first event can't be a completion */
+def main():
+    global number_stream
+    global DEFAULT
 
-while (t.arrival < STOP) or (number > 0):
-    t.next = Min(t.arrival, t.completion)  # next event time   */
-    if number > 0:  # update integrals  */
-        area.node += (t.next - t.current) * number
-        area.queue += (t.next - t.current) * (number - 1)
-        area.service += (t.next - t.current)
-    # EndIf
+    CleanData()
+    seeds = [123456789, 123451234, 987654321, 131231513, 121212123]
+    for seed in seeds:
+        Seed(seed)
+        Reset()
+        Simulation()
+        WriteData()
 
-    t.current = t.next  # advance the clock */
 
-    if t.current == t.arrival:  # process an arrival */
-        number += 1
-        t.arrival = GetArrival()
-        if t.arrival > STOP:
-            t.last = t.current
-            t.arrival = INFINITY
+    GraphicData("Waiting Time", 1,seeds)
+    GraphicData("Utilization", 4,seeds)
+    GraphicData("Average in the Queue", 3,seeds)
 
-        if number == 1:
-            t.completion = t.current + GetService()
-    # EndOuterIf
-    else:  # process a completion */
-        index += 1
-        number -= 1
-        if number > 0:
-            t.completion = t.current + GetService()
-        else:
-            t.completion = INFINITY
 
-# EndWhile
-
-print("\nfor {0} jobs".format(index))
-print("   average interarrival time = {0:6.2f}".format(t.last / index))
-print("   average wait ............ = {0:6.2f}".format(area.node / index))
-print("   average delay ........... = {0:6.2f}".format(area.queue / index))
-print("   average service time .... = {0:6.2f}".format(area.service / index))
-print("   average # in the node ... = {0:6.2f}".format(area.node / t.current))
-print("   average # in the queue .. = {0:6.2f}".format(area.queue / t.current))
-print("   utilization ............. = {0:6.2f}".format(area.service / t.current))
-
-# C output:
-# for 10025 jobs
-#    average interarrival time =   1.99
-#    average wait ............ =   3.92
-#    average delay ........... =   2.41
-#    average service time .... =   1.50
-#    average # in the node ... =   1.96
-#    average # in the queue .. =   1.21
-#    utilization ............. =   0.75
-
+if __name__ == "__main__":
+    main()
