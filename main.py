@@ -17,27 +17,25 @@
 #  */
 
 import csv
-import argparse
 from math import log
 import matplotlib
 from matplotlib import pyplot as plt
-from rngs import plantSeeds, random, selectStream
+from rngs import plantSeeds, random, selectStream, getSeed
+from rngs import DEFAULT
 
 matplotlib.use('TkAgg')
-
+NUMBER_SIMULATION = 5
 START = 0.0  # initial time                   */
-STOP = 190000.0  # terminal (close the door) time */
+STOP = 2000000.0  # terminal (close the door) time */
 INFINITY = (100.0 * STOP)  # must be much larger than STOP  */
 arrivalTemp = START  # global temp var for getArrival function
-sum = 0
-iter = 0
-number_stream = 0
+summary = 0
+iteration = 0
 file_csv = "metrics.csv"
 matrix = []
-
-
-def Seed(seed):
-    plantSeeds(seed)
+max_simulation = 2000000
+step_size = 500
+plantSeeds(DEFAULT)
 
 
 def Min(a, c):
@@ -73,9 +71,7 @@ def GetArrival():
     # * ---------------------------------------------
     # */
     global arrivalTemp
-    global number_stream
-    selectStream(number_stream)
-    # print("arrivalTemp: " + str(arrivalTemp))
+    selectStream(0)
     arrivalTemp += Exponential(2)
     return arrivalTemp
 
@@ -85,16 +81,13 @@ def GetService():
     # * generate the next service time with rate 1/2
     # * --------------------------------------------
     # */
-    global number_stream
 
-    selectStream(number_stream + 1)
+    selectStream(100)
     return Uniform(1, 2)
 
 
 def Feedback():
-    global number_stream
-
-    selectStream(number_stream + 2)
+    selectStream(200)
     p_feedback = 0.2
     if random() < p_feedback:
         return True
@@ -116,12 +109,10 @@ class time:
     last = -1  # last arrival time                   */
 
 
-
 def Reset():
     global arrivalTemp, t, area, matrix
     arrivalTemp = START
     t.current = START  # set the clock                         */
-    t.arrival = GetArrival()  # schedule the first arrival            */
     t.completion = INFINITY  # the first event can't be a completion */
     area.node = 0
     area.queue = 0
@@ -132,6 +123,8 @@ def Reset():
 def Simulation():
     index = 0  # used to count departed jobs         */
     number = 0  # number in the node                  */
+    job_feedback = 0
+    t.arrival = GetArrival()  # schedule the first arrival            */
     while (t.arrival < STOP) or (number > 0):
         t.next = Min(t.arrival, t.completion)  # next event time   */
         if number > 0:  # update integrals  */
@@ -157,26 +150,23 @@ def Simulation():
             index += 1
             if not Feedback():
                 number -= 1
+            else:
+                job_feedback += 1
             if number > 0:
                 t.completion = t.current + GetService()
             else:
                 t.completion = INFINITY
-            if index % 500 == 0 and index < 150000 and index != 0:
+            if index % step_size == 0 and index < max_simulation and index != 0:
                 SaveData(index)
             # EndWhile
-
-    print("   average interarrival time = {0:6.2f}".format(t.last / index))
-    print("   average wait ............ = {0:6.2f}".format(area.node / index))
-    print("   average delay ........... = {0:6.2f}".format(area.queue / index))
-    print("   average service time .... = {0:6.2f}".format(area.service / index))
+    print("   average interarrival time = {0:6.2f}".format(t.last / (index-job_feedback)))
+    print("   average wait ............ = {0:6.2f}".format(area.node / (index-job_feedback)))
+    print("   average delay ........... = {0:6.2f}".format(area.queue / (index-job_feedback)))
+    print("   average service time .... = {0:6.2f}".format(area.service / (index-job_feedback)))
     print("   average # in the node ... = {0:6.2f}".format(area.node / t.current))
     print("   average # in the queue .. = {0:6.2f}".format(area.queue / t.current))
     print("   utilization ............. = {0:6.2f}".format(area.service / t.current))
 
-    # Dati da salvare:
-    # Utilization
-    # Waiting Time
-    # Average # in the queue
 
 
 def SaveData(index):
@@ -186,9 +176,11 @@ def SaveData(index):
     utilization = area.service / t.current
     matrix.append([index, average_wait, average_in_node, average_in_queue, utilization])
 
+
 def CleanData():
     with open(file_csv, mode='w', newline='') as file:
         pass
+
 
 def WriteData():
     with open(file_csv, mode='a', newline='') as file:
@@ -201,7 +193,7 @@ def WriteData():
 def GraphicData(metric, metricsrow, seed):
     x = []
     y = []
-    colors = ['b', 'g', 'r','c', 'm', 'y', 'k']
+    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k']
     color_index = 0
 
     with open(file_csv, mode='r') as file:
@@ -234,21 +226,19 @@ t = time()
 
 
 def main():
-    global number_stream
-    global DEFAULT
-
+    seeds = []
     CleanData()
-    seeds = [123456789, 123451234, 987654321, 131231513, 121212123]
-    for seed in seeds:
-        Seed(seed)
+    i = 0
+    while i < NUMBER_SIMULATION:
+        seed = getSeed()
         Reset()
         Simulation()
+        seeds.append(seed)
         WriteData()
-
-
-    GraphicData("Waiting Time", 1,seeds)
-    GraphicData("Utilization", 4,seeds)
-    GraphicData("Average in the Queue", 3,seeds)
+        i += 1
+    GraphicData("Waiting Time", 1, seeds)
+    GraphicData("Utilization", 4, seeds)
+    GraphicData("Average in the Queue", 3, seeds)
 
 
 if __name__ == "__main__":
